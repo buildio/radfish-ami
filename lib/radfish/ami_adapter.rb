@@ -135,6 +135,11 @@ module Radfish
       system_info["SerialNumber"]
     end
 
+    def system_health
+      info = system_info
+      info.dig("Status", "Health") || info.dig("Status", "HealthRollup") || "Unknown"
+    end
+
     def cpus
       response = authenticated_request(:get, "/redfish/v1/Systems/#{SYSTEM_ID}/Processors")
       return [] unless response.status == 200
