@@ -288,6 +288,34 @@ module Radfish
         0
     end
 
+    # PCI Devices
+    def pci_devices
+      # Try PCIeDevices endpoint first (Redfish standard)
+      response = authenticated_request(:get, "/redfish/v1/Systems/#{SYSTEM_ID}/PCIeDevices")
+      if response.status == 200
+        collection = JSON.parse(response.body)
+        members = collection["Members"] || []
+
+        return members.map do |member|
+          device_response = authenticated_request(:get, member["@odata.id"])
+          next nil unless device_response.status == 200
+          data = JSON.parse(device_response.body)
+          OpenStruct.new(
+            id: data["Id"],
+            name: data["Name"],
+            manufacturer: data["Manufacturer"],
+            model: data["Model"],
+            device_type: data["DeviceType"],
+            pcie_interface: data["PCIeInterface"],
+            status: data.dig("Status", "Health") || "OK"
+          )
+        end.compact
+      end
+
+      # Fallback: return empty array if not supported
+      []
+    end
+
     # Storage
     def storage_controllers
       response = authenticated_request(:get, "/redfish/v1/Systems/#{SYSTEM_ID}/Storage")
