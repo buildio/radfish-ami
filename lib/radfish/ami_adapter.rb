@@ -740,7 +740,10 @@ module Radfish
 
     def ensure_session!
       unless @session&.x_auth_token
-        raise AuthenticationError, "Not logged in. Call #login first."
+        # Auto-login if not already logged in
+        unless login
+          raise AuthenticationError, "Failed to authenticate. Check credentials."
+        end
       end
     end
 
