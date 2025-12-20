@@ -162,6 +162,38 @@ module Radfish
       end
     end
 
+    # CPU info wrapper
+    class CpuInfo
+      attr_reader :socket, :manufacturer, :model, :cores, :threads, :speed_mhz, :status, :raw_data
+
+      def initialize(data)
+        @raw_data = data
+        @socket = data["Socket"] || data["Id"]
+        @manufacturer = data["Manufacturer"]
+        @model = data.dig("ProcessorId", "EffectiveFamily")&.strip || data["Model"]
+        @cores = data["TotalCores"]
+        @threads = data["TotalThreads"]
+        @speed_mhz = data["MaxSpeedMHz"]
+        @status = data.dig("Status", "Health") || "Unknown"
+      end
+
+      def to_h
+        {
+          socket: @socket,
+          manufacturer: @manufacturer,
+          model: @model,
+          cores: @cores,
+          threads: @threads,
+          speed_mhz: @speed_mhz,
+          status: @status
+        }
+      end
+
+      def [](key)
+        @raw_data[key]
+      end
+    end
+
     def bmc_info
       manager = get_manager_info
       network = get_bmc_network
@@ -186,7 +218,8 @@ module Radfish
       members.map do |member|
         cpu_response = authenticated_request(:get, member["@odata.id"])
         next nil unless cpu_response.status == 200
-        JSON.parse(cpu_response.body)
+        data = JSON.parse(cpu_response.body)
+        CpuInfo.new(data)
       end.compact
     end
 
