@@ -137,7 +137,29 @@ module Radfish
 
     def system_health
       info = system_info
-      info.dig("Status", "Health") || info.dig("Status", "HealthRollup") || "Unknown"
+      status = info["Status"] || {}
+      HealthStatus.new(
+        health: status["Health"] || "Unknown",
+        rollup: status["HealthRollup"] || status["Health"] || "Unknown"
+      )
+    end
+
+    # Simple struct for health status with rollup
+    class HealthStatus
+      attr_reader :health, :rollup
+
+      def initialize(health:, rollup:)
+        @health = health
+        @rollup = rollup
+      end
+
+      def to_s
+        @health
+      end
+
+      def ==(other)
+        other.to_s == to_s
+      end
     end
 
     def bmc_info
