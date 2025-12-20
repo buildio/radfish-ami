@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'ostruct'
+
 module Radfish
   class AmiAdapter < Core::BaseClient
     include Core::Power
@@ -138,60 +140,10 @@ module Radfish
     def system_health
       info = system_info
       status = info["Status"] || {}
-      HealthStatus.new(
+      OpenStruct.new(
         health: status["Health"] || "Unknown",
         rollup: status["HealthRollup"] || status["Health"] || "Unknown"
       )
-    end
-
-    # Simple struct for health status with rollup
-    class HealthStatus
-      attr_reader :health, :rollup
-
-      def initialize(health:, rollup:)
-        @health = health
-        @rollup = rollup
-      end
-
-      def to_s
-        @health
-      end
-
-      def ==(other)
-        other.to_s == to_s
-      end
-    end
-
-    # CPU info wrapper
-    class CpuInfo
-      attr_reader :socket, :manufacturer, :model, :cores, :threads, :speed_mhz, :status, :raw_data
-
-      def initialize(data)
-        @raw_data = data
-        @socket = data["Socket"] || data["Id"]
-        @manufacturer = data["Manufacturer"]
-        @model = data.dig("ProcessorId", "EffectiveFamily")&.strip || data["Model"]
-        @cores = data["TotalCores"]
-        @threads = data["TotalThreads"]
-        @speed_mhz = data["MaxSpeedMHz"]
-        @status = data.dig("Status", "Health") || "Unknown"
-      end
-
-      def to_h
-        {
-          socket: @socket,
-          manufacturer: @manufacturer,
-          model: @model,
-          cores: @cores,
-          threads: @threads,
-          speed_mhz: @speed_mhz,
-          status: @status
-        }
-      end
-
-      def [](key)
-        @raw_data[key]
-      end
     end
 
     def bmc_info
@@ -219,7 +171,15 @@ module Radfish
         cpu_response = authenticated_request(:get, member["@odata.id"])
         next nil unless cpu_response.status == 200
         data = JSON.parse(cpu_response.body)
-        CpuInfo.new(data)
+        OpenStruct.new(
+          socket: data["Socket"] || data["Id"],
+          manufacturer: data["Manufacturer"],
+          model: data.dig("ProcessorId", "EffectiveFamily")&.strip || data["Model"],
+          cores: data["TotalCores"],
+          threads: data["TotalThreads"],
+          speed_mhz: data["MaxSpeedMHz"],
+          health: data.dig("Status", "Health") || "Unknown"
+        )
       end.compact
     end
 
@@ -233,7 +193,17 @@ module Radfish
       members.map do |member|
         mem_response = authenticated_request(:get, member["@odata.id"])
         next nil unless mem_response.status == 200
-        JSON.parse(mem_response.body)
+        data = JSON.parse(mem_response.body)
+        OpenStruct.new(
+          name: data["Name"] || data["Id"],
+          capacity_bytes: data["CapacityMiB"] ? data["CapacityMiB"] * 1024 * 1024 : nil,
+          speed_mhz: data["OperatingSpeedMhz"],
+          manufacturer: data["Manufacturer"],
+          part_number: data["PartNumber"],
+          serial_number: data["SerialNumber"],
+          memory_type: data["MemoryDeviceType"],
+          status: data.dig("Status", "Health") || "OK"
+        )
       end.compact
     end
 
@@ -247,23 +217,58 @@ module Radfish
       members.map do |member|
         nic_response = authenticated_request(:get, member["@odata.id"])
         next nil unless nic_response.status == 200
-        JSON.parse(nic_response.body)
+        data = JSON.parse(nic_response.body)
+        OpenStruct.new(
+          name: data["Name"] || data["Id"],
+          mac: data["MACAddress"],
+          speed_mbps: data["SpeedMbps"],
+          link_status: data["LinkStatus"],
+          ipv4_addresses: data["IPv4Addresses"],
+          ipv6_addresses: data["IPv6Addresses"],
+          status: data.dig("Status", "Health") || "OK"
+        )
       end.compact
     end
 
     def fans
       thermal = get_thermal_data
-      thermal["Fans"] || []
+      (thermal["Fans"] || []).map do |fan|
+        OpenStruct.new(
+          name: fan["Name"] || fan["MemberId"],
+          rpm: fan["Reading"],
+          status: fan.dig("Status", "Health") || "OK",
+          min_rpm: fan["MinReadingRange"],
+          max_rpm: fan["MaxReadingRange"]
+        )
+      end
     end
 
     def temperatures
       thermal = get_thermal_data
-      thermal["Temperatures"] || []
+      (thermal["Temperatures"] || []).map do |temp|
+        OpenStruct.new(
+          name: temp["Name"] || temp["MemberId"],
+          reading_celsius: temp["ReadingCelsius"],
+          status: temp.dig("Status", "Health") || "OK",
+          upper_threshold_critical: temp["UpperThresholdCritical"],
+          upper_threshold_fatal: temp["UpperThresholdFatal"]
+        )
+      end
     end
 
     def psus
       power_data = get_power_data
-      power_data["PowerSupplies"] || []
+      (power_data["PowerSupplies"] || []).map do |psu|
+        OpenStruct.new(
+          name: psu["Name"] || psu["MemberId"],
+          model: psu["Model"],
+          serial: psu["SerialNumber"],
+          watts: psu["PowerCapacityWatts"],
+          voltage: psu.dig("InputRanges", 0, "NominalVoltageVolts"),
+          voltage_human: psu.dig("InputRanges", 0, "InputType"),
+          status: psu.dig("Status", "Health") || "OK"
+        )
+      end
     end
 
     def power_consumption
@@ -312,7 +317,19 @@ module Radfish
       drive_refs.map do |ref|
         drive_response = authenticated_request(:get, ref["@odata.id"])
         next nil unless drive_response.status == 200
-        JSON.parse(drive_response.body)
+        drive_data = JSON.parse(drive_response.body)
+        OpenStruct.new(
+          name: drive_data["Name"] || drive_data["Id"],
+          model: drive_data["Model"],
+          manufacturer: drive_data["Manufacturer"],
+          serial: drive_data["SerialNumber"],
+          capacity_bytes: drive_data["CapacityBytes"],
+          capacity_gb: drive_data["CapacityBytes"] ? (drive_data["CapacityBytes"] / 1_000_000_000.0).round(2) : nil,
+          media_type: drive_data["MediaType"],
+          protocol: drive_data["Protocol"],
+          status: drive_data.dig("Status", "Health") || "OK",
+          certified: drive_data.dig("Oem", "Dell", "Certified") || drive_data.dig("Oem", "AMI", "Certified")
+        )
       end.compact
     end
 
@@ -365,7 +382,18 @@ module Radfish
       drive_refs.map do |ref|
         drive_response = authenticated_request(:get, ref["@odata.id"])
         next nil unless drive_response.status == 200
-        JSON.parse(drive_response.body)
+        drive_data = JSON.parse(drive_response.body)
+        OpenStruct.new(
+          name: drive_data["Name"] || drive_data["Id"],
+          model: drive_data["Model"],
+          manufacturer: drive_data["Manufacturer"],
+          serial: drive_data["SerialNumber"],
+          capacity_bytes: drive_data["CapacityBytes"],
+          capacity_gb: drive_data["CapacityBytes"] ? (drive_data["CapacityBytes"] / 1_000_000_000.0).round(2) : nil,
+          media_type: drive_data["MediaType"],
+          protocol: drive_data["Protocol"],
+          status: drive_data.dig("Status", "Health") || "OK"
+        )
       end.compact
     end
 
