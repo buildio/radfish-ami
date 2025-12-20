@@ -22,6 +22,11 @@ module Radfish
       "ami"
     end
 
+    # Allow adapter to be used directly where code expects client.adapter
+    def adapter
+      self
+    end
+
     # Session management
     def login
       @session = Core::Session.new(self)
