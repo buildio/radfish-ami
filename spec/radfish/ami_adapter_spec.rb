@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+# Load the adapter compliance shared examples
+require_relative '../support/adapter_compliance'
+
 RSpec.describe Radfish::AmiAdapter do
   let(:adapter) do
     described_class.new(
@@ -8,6 +11,9 @@ RSpec.describe Radfish::AmiAdapter do
       password: "secret"
     )
   end
+
+  # Test adapter interface compliance
+  it_behaves_like "a radfish adapter"
 
   describe "#vendor" do
     it "returns 'ami'" do

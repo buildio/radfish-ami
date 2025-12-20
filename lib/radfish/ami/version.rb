@@ -2,6 +2,6 @@
 
 module Radfish
   module Ami
-    VERSION = "0.1.10"
+    VERSION = "0.1.11"
   end
 end
