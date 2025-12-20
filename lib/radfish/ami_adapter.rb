@@ -300,19 +300,25 @@ module Radfish
         controller_response = authenticated_request(:get, member["@odata.id"])
         next nil unless controller_response.status == 200
         data = JSON.parse(controller_response.body)
-        Radfish::Controller.new(
-          client: self,
+        # Return OpenStruct - Radfish::Client will wrap in Controller
+        OpenStruct.new(
           id: data["Id"],
           name: data["Name"],
           model: data["Model"],
           status: data.dig("Status", "Health"),
-          adapter_data: data
+          "@odata.id": member["@odata.id"]
         )
       end.compact
     end
 
     def drives(controller)
-      controller_id = controller.is_a?(Radfish::Controller) ? controller.id : controller
+      controller_id = if controller.is_a?(Radfish::Controller)
+                        controller.id
+                      elsif controller.respond_to?(:id)
+                        controller.id
+                      else
+                        controller
+                      end
       response = authenticated_request(:get, "/redfish/v1/Systems/#{SYSTEM_ID}/Storage/#{controller_id}")
       return [] unless response.status == 200
 
@@ -339,8 +345,13 @@ module Radfish
     end
 
     def volumes(controller)
-      controller_obj = controller.is_a?(Radfish::Controller) ? controller : nil
-      controller_id = controller.is_a?(Radfish::Controller) ? controller.id : controller
+      controller_id = if controller.is_a?(Radfish::Controller)
+                        controller.id
+                      elsif controller.respond_to?(:id)
+                        controller.id
+                      else
+                        controller
+                      end
       response = authenticated_request(:get, "/redfish/v1/Systems/#{SYSTEM_ID}/Storage/#{controller_id}/Volumes")
       return [] unless response.status == 200
 
@@ -351,37 +362,37 @@ module Radfish
         volume_response = authenticated_request(:get, member["@odata.id"])
         next nil unless volume_response.status == 200
         data = JSON.parse(volume_response.body)
-        Radfish::Volume.new(
-          client: self,
-          controller: controller_obj,
-          id: data["Id"],
-          name: data["Name"],
-          capacity_bytes: data["CapacityBytes"],
-          raid_type: data["RAIDType"],
-          health: data.dig("Status", "Health"),
-          adapter_data: data
-        )
+        # Return hash with normalized keys - Radfish::Client will wrap in Volume
+        # Keep the raw data for adapter_data access
+        data["id"] = data["Id"]
+        data["name"] = data["Name"]
+        data["capacity_bytes"] = data["CapacityBytes"]
+        data["raid_type"] = data["RAIDType"]
+        data["health"] = data.dig("Status", "Health")
+        data
       end.compact
     end
 
     def volume_drives(volume)
       volume_id = volume.is_a?(Radfish::Volume) ? volume.id : volume
-      # Get volume details to find linked drives
+      # Get volume details to find linked drives - adapter_data is the raw hash
       volume_data = volume.is_a?(Radfish::Volume) ? volume.adapter_data : nil
 
-      unless volume_data
+      # volume_data should be a hash with "Links" -> "Drives"
+      unless volume_data.is_a?(Hash)
         # Need to fetch volume data
         storage_controllers.each do |controller|
           vols = volumes(controller)
-          vol = vols.find { |v| v.id == volume_id }
+          # volumes() returns hashes now
+          vol = vols.find { |v| (v["id"] || v["Id"]) == volume_id }
           if vol
-            volume_data = vol.adapter_data
+            volume_data = vol
             break
           end
         end
       end
 
-      return [] unless volume_data
+      return [] unless volume_data.is_a?(Hash)
 
       drive_refs = volume_data.dig("Links", "Drives") || []
       drive_refs.map do |ref|
