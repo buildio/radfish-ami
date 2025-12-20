@@ -484,7 +484,10 @@ module Radfish
       end
     end
 
-    def insert_virtual_media(iso_url, device: nil)
+    def insert_virtual_media(iso_url, device: nil, username: nil, password: nil)
+      # Ensure remote media is enabled (AMI-specific)
+      ensure_remote_media_enabled!
+
       devices = virtual_media
       target_device = if device
                         devices.find { |d| d["Id"] == device || d["Name"]&.include?(device.to_s) }
@@ -498,9 +501,20 @@ module Radfish
       device_path = target_device["@odata.id"]
       actions = target_device.dig("Actions", "#VirtualMedia.InsertMedia")
 
+      # Detect transfer protocol from URL (AMI requires this)
+      transfer_protocol = detect_transfer_protocol(iso_url)
+
       if actions && actions["target"]
         # Use the InsertMedia action
-        payload = { "Image" => iso_url, "Inserted" => true, "WriteProtected" => true }
+        # AMI requires UserName/Password even for anonymous access
+        payload = {
+          "Image" => iso_url,
+          "Inserted" => true,
+          "WriteProtected" => true,
+          "TransferProtocolType" => transfer_protocol,
+          "UserName" => username || "",
+          "Password" => password || ""
+        }
         response = authenticated_request(:post, actions["target"], body: payload.to_json)
       else
         # Fallback to PATCH method
@@ -508,17 +522,53 @@ module Radfish
         response = authenticated_request(:patch, device_path, body: payload.to_json)
       end
 
+      # 200, 202, 204 are all success (202 = accepted, async operation)
       if response.status.between?(200, 204)
-        debug "Virtual media inserted successfully", 1, :green
+        debug "Virtual media insert initiated successfully", 1, :green
         true
       else
         error_msg = begin
-                      JSON.parse(response.body).dig("error", "message")
+                      data = JSON.parse(response.body)
+                      # Try to get detailed error from ExtendedInfo
+                      extended = data.dig("error", "@Message.ExtendedInfo")
+                      if extended&.any?
+                        extended.map { |e| e["Message"] }.join("; ")
+                      else
+                        data.dig("error", "message")
+                      end
                     rescue
                       response.body
                     end
         raise VirtualMediaError, "Failed to insert virtual media: #{error_msg}"
       end
+    end
+
+    # Enable remote media support (AMI-specific, required before virtual media works)
+    def enable_remote_media
+      response = authenticated_request(
+        :post,
+        "/redfish/v1/Managers/#{MANAGER_ID}/Actions/Oem/AMIVirtualMedia.EnableRMedia",
+        body: { "RMediaState" => "Enable" }.to_json
+      )
+      response.status.between?(200, 204)
+    end
+
+    # Disable remote media support (AMI-specific)
+    def disable_remote_media
+      response = authenticated_request(
+        :post,
+        "/redfish/v1/Managers/#{MANAGER_ID}/Actions/Oem/AMIVirtualMedia.EnableRMedia",
+        body: { "RMediaState" => "Disable" }.to_json
+      )
+      response.status.between?(200, 204)
+    end
+
+    # Check if remote media is enabled
+    def remote_media_enabled?
+      response = authenticated_request(:get, "/redfish/v1/Managers/#{MANAGER_ID}")
+      return false unless response.status == 200
+      data = JSON.parse(response.body)
+      data.dig("Oem", "Ami", "VirtualMedia", "RMediaStatus") == "Enabled"
     end
 
     def eject_virtual_media(device: nil)
@@ -961,6 +1011,38 @@ module Radfish
           {}
         end
       end
+    end
+
+    # Detect transfer protocol from URL for AMI virtual media
+    def detect_transfer_protocol(url)
+      uri = URI.parse(url)
+      case uri.scheme&.downcase
+      when 'https'
+        'HTTPS'
+      when 'nfs'
+        'NFS'
+      when 'cifs', 'smb'
+        'CIFS'
+      when 'http'
+        # AMI doesn't support plain HTTP, try HTTPS
+        'HTTPS'
+      else
+        'HTTPS'  # Default to HTTPS
+      end
+    end
+
+    # Ensure remote media is enabled (AMI-specific requirement)
+    def ensure_remote_media_enabled!
+      return if remote_media_enabled?
+
+      response = authenticated_request(
+        :post,
+        "/redfish/v1/Managers/#{MANAGER_ID}/Actions/Oem/AMIVirtualMedia.EnableRMedia",
+        body: { "RMediaState" => "Enable" }.to_json
+      )
+
+      # Wait for the action to complete
+      sleep 3 if response.status.between?(200, 204)
     end
   end
 
