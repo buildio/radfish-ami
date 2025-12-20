@@ -140,6 +140,20 @@ module Radfish
       info.dig("Status", "Health") || info.dig("Status", "HealthRollup") || "Unknown"
     end
 
+    def bmc_info
+      manager = get_manager_info
+      network = get_bmc_network
+
+      {
+        firmware_version: manager["FirmwareVersion"],
+        redfish_version: service_root["RedfishVersion"],
+        mac_address: network["mac_address"],
+        ip_address: network["ipv4_address"],
+        hostname: network["hostname"],
+        health: manager.dig("Status", "Health") || "OK"
+      }
+    end
+
     def cpus
       response = authenticated_request(:get, "/redfish/v1/Systems/#{SYSTEM_ID}/Processors")
       return [] unless response.status == 200
@@ -422,6 +436,17 @@ module Radfish
     def boot_config
       info = system_info
       info["Boot"] || {}
+    end
+
+    def boot_options
+      boot = boot_config
+      {
+        "boot_source_override_enabled" => boot["BootSourceOverrideEnabled"],
+        "boot_source_override_target" => boot["BootSourceOverrideTarget"],
+        "boot_source_override_mode" => boot["BootSourceOverrideMode"],
+        "boot_order" => boot["BootOrder"],
+        "allowed_targets" => boot["BootSourceOverrideTarget@Redfish.AllowableValues"]
+      }
     end
 
     def set_boot_override(target, persistent: false)
@@ -788,6 +813,26 @@ module Radfish
         JSON.parse(response.body)
       else
         {}
+      end
+    end
+
+    def get_manager_info
+      response = authenticated_request(:get, "/redfish/v1/Managers/#{MANAGER_ID}")
+      if response.status == 200
+        JSON.parse(response.body)
+      else
+        {}
+      end
+    end
+
+    def service_root
+      @service_root ||= begin
+        response = authenticated_request(:get, "/redfish/v1")
+        if response.status == 200
+          JSON.parse(response.body)
+        else
+          {}
+        end
       end
     end
   end
