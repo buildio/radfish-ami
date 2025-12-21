@@ -241,9 +241,13 @@ module Radfish
         OpenStruct.new(
           name: fan["Name"] || fan["MemberId"],
           rpm: fan["Reading"],
+          reading_units: fan["ReadingUnits"] || "RPM",
           status: fan.dig("Status", "Health") || "OK",
+          state: fan.dig("Status", "State") || "Unknown",
+          lower_threshold_critical: fan["LowerThresholdNonCritical"],
           min_rpm: fan["MinReadingRange"],
-          max_rpm: fan["MaxReadingRange"]
+          max_rpm: fan["MaxReadingRange"],
+          physical_context: fan["PhysicalContext"]
         )
       end
     end
@@ -262,18 +266,58 @@ module Radfish
     end
 
     def psus
+      # AMI BMC reports power sensors in the Power endpoint, not traditional PSU info
+      # Filter to show only PSU-related power sensors (containing "PSU" in name)
       power_data = get_power_data
-      (power_data["PowerSupplies"] || []).map do |psu|
-        OpenStruct.new(
-          name: psu["Name"] || psu["MemberId"],
-          model: psu["Model"],
-          serial: psu["SerialNumber"],
-          watts: psu["PowerCapacityWatts"],
-          voltage: psu.dig("InputRanges", 0, "NominalVoltageVolts"),
-          voltage_human: psu.dig("InputRanges", 0, "InputType"),
-          status: psu.dig("Status", "Health") || "OK"
-        )
+      all_sensors = power_data["PowerSupplies"] || []
+
+      # Filter for actual PSU sensors (PIN = input, POUT = output)
+      psu_sensors = all_sensors.select do |sensor|
+        name = sensor["Name"] || ""
+        name.include?("PSU")
       end
+
+      # Group by PSU number and merge input/output readings
+      psu_groups = {}
+      psu_sensors.each do |sensor|
+        name = sensor["Name"] || ""
+        # Extract PSU number from names like "PWR_PSU3_PIN" or "PWR_PSU2_POUT"
+        match = name.match(/PSU(\d+)/)
+        next unless match
+
+        psu_num = match[1]
+        psu_groups[psu_num] ||= { input_watts: nil, output_watts: nil, status: nil, state: nil }
+
+        if name.include?("PIN")
+          psu_groups[psu_num][:input_watts] = sensor["PowerInputWatts"]
+        elsif name.include?("POUT")
+          psu_groups[psu_num][:output_watts] = sensor["PowerInputWatts"] # POUT reported as PowerInputWatts
+        end
+
+        # Track status - prefer non-Absent, but record Absent if that's all we have
+        sensor_state = sensor.dig("Status", "State")
+        sensor_health = sensor.dig("Status", "Health")
+
+        if sensor_state == "Absent"
+          psu_groups[psu_num][:state] ||= "Absent"
+          psu_groups[psu_num][:status] ||= "N/A"
+        else
+          # Override Absent with actual status
+          psu_groups[psu_num][:status] = sensor_health || "OK"
+          psu_groups[psu_num][:state] = sensor_state || "Enabled"
+        end
+      end
+
+      # Convert to OpenStruct array
+      psu_groups.map do |psu_num, data|
+        OpenStruct.new(
+          name: "PSU#{psu_num}",
+          input_watts: data[:input_watts],
+          output_watts: data[:output_watts],
+          status: data[:status] || "Unknown",
+          state: data[:state] || "Unknown"
+        )
+      end.sort_by { |psu| psu.name }
     end
 
     def power_consumption
@@ -757,11 +801,11 @@ module Radfish
 
     def jobs_summary
       all_jobs = jobs
+      completed = all_jobs.count { |j| j["TaskState"] == "Completed" }
       {
-        total: all_jobs.size,
-        running: all_jobs.count { |j| j["TaskState"] == "Running" },
-        completed: all_jobs.count { |j| j["TaskState"] == "Completed" },
-        failed: all_jobs.count { |j| %w[Exception Killed Cancelled].include?(j["TaskState"]) }
+        'completed_count' => completed,
+        'incomplete_count' => all_jobs.size - completed,
+        'total_count' => all_jobs.size
       }
     end
 
