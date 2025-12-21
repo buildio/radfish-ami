@@ -266,8 +266,9 @@ module Radfish
     end
 
     def psus
-      # AMI BMC reports power sensors in the Power endpoint, not traditional PSU info
-      # Filter to show only PSU-related power sensors (containing "PSU" in name)
+      # AMI BMC reports power sensors in the Power endpoint
+      # Format: { name: "PSU1", model: "...", serial: "...",
+      #           voltage: 208, voltage_human: "AC240V", watts: 320, status: "OK" }
       power_data = get_power_data
       all_sensors = power_data["PowerSupplies"] || []
 
@@ -286,36 +287,34 @@ module Radfish
         next unless match
 
         psu_num = match[1]
-        psu_groups[psu_num] ||= { input_watts: nil, output_watts: nil, status: nil, state: nil }
+        psu_groups[psu_num] ||= { watts: nil, status: nil }
 
-        if name.include?("PIN")
-          psu_groups[psu_num][:input_watts] = sensor["PowerInputWatts"]
-        elsif name.include?("POUT")
-          psu_groups[psu_num][:output_watts] = sensor["PowerInputWatts"] # POUT reported as PowerInputWatts
+        # Use PIN (input) watts as the primary wattage reading
+        if name.include?("PIN") && sensor["PowerInputWatts"]
+          psu_groups[psu_num][:watts] = sensor["PowerInputWatts"]
         end
 
-        # Track status - prefer non-Absent, but record Absent if that's all we have
+        # Track status - prefer non-Absent
         sensor_state = sensor.dig("Status", "State")
         sensor_health = sensor.dig("Status", "Health")
 
-        if sensor_state == "Absent"
-          psu_groups[psu_num][:state] ||= "Absent"
-          psu_groups[psu_num][:status] ||= "N/A"
-        else
-          # Override Absent with actual status
+        if sensor_state != "Absent"
           psu_groups[psu_num][:status] = sensor_health || "OK"
-          psu_groups[psu_num][:state] = sensor_state || "Enabled"
+        elsif psu_groups[psu_num][:status].nil?
+          psu_groups[psu_num][:status] = "Absent"
         end
       end
 
-      # Convert to OpenStruct array
+      # Convert to OpenStruct array matching expected format
       psu_groups.map do |psu_num, data|
         OpenStruct.new(
           name: "PSU#{psu_num}",
-          input_watts: data[:input_watts],
-          output_watts: data[:output_watts],
-          status: data[:status] || "Unknown",
-          state: data[:state] || "Unknown"
+          model: nil,           # AMI doesn't provide model info
+          serial: nil,          # AMI doesn't provide serial info
+          voltage: nil,         # AMI doesn't provide voltage info
+          voltage_human: nil,   # AMI doesn't provide voltage type
+          watts: data[:watts],
+          status: data[:status] || "Unknown"
         )
       end.sort_by { |psu| psu.name }
     end
