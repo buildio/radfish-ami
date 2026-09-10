@@ -21,7 +21,7 @@ Gem::Specification.new do |spec|
   end
   spec.require_paths = ["lib"]
 
-  spec.add_dependency "radfish", "~> 0.2"
+  spec.add_dependency "radfish", "~> 0.3", ">= 0.3.0"
   spec.add_dependency "ostruct", "~> 0.6"
 
   spec.add_development_dependency "bundler", "~> 2.0"
