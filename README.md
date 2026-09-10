@@ -46,7 +46,7 @@ client.power_restart(force: true)
 
 # Virtual media
 client.insert_virtual_media('http://example.com/boot.iso')
-client.set_boot_override('Cd', persistent: false)
+client.set_boot_override('Cd', persistence: 'Once')
 client.power_restart
 
 # Thermal data

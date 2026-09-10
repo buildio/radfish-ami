@@ -648,7 +648,7 @@ module Radfish
 
     def mount_iso_and_boot(iso_url, device: nil)
       insert_virtual_media(iso_url, device: device)
-      set_boot_override("Cd", persistent: false)
+      set_boot_override("Cd", persistence: 'Once')
       power_restart(force: true)
     end
 
@@ -669,19 +669,19 @@ module Radfish
       }
     end
 
-    def set_boot_override(target, persistent: false)
-      enabled = persistent ? "Continuous" : "Once"
+    def set_boot_override(target, persistence: nil, mode: nil)
+      persistence = "Once" unless persistence
       payload = {
         "Boot" => {
           "BootSourceOverrideTarget" => target,
-          "BootSourceOverrideEnabled" => enabled
+          "BootSourceOverrideEnabled" => persistence
         }
       }
 
       response = authenticated_request(:patch, "/redfish/v1/Systems/#{SYSTEM_ID}", body: payload.to_json)
 
       if response.status.between?(200, 204)
-        debug "Boot override set to #{target} (#{enabled})", 1, :green
+        debug "Boot override set to #{target} (#{persistence})", 1, :green
         true
       else
         error_msg = begin
@@ -720,24 +720,24 @@ module Radfish
       boot_config["BootOrder"] || []
     end
 
-    def boot_to_pxe(persistent: false)
-      set_boot_override("Pxe", persistent: persistent)
+    def boot_to_pxe(persistence: nil, mode: nil)
+      set_boot_override("Pxe", persistence: persistence, mode: mode)
     end
 
-    def boot_to_disk(persistent: false)
-      set_boot_override("Hdd", persistent: persistent)
+    def boot_to_disk(persistence: nil, mode: nil)
+      set_boot_override("Hdd", persistence: persistence, mode: mode)
     end
 
-    def boot_to_cd(persistent: false)
-      set_boot_override("Cd", persistent: persistent)
+    def boot_to_cd(persistence: nil, mode: nil)
+      set_boot_override("Cd", persistence: persistence, mode: mode)
     end
 
-    def boot_to_usb(persistent: false)
-      set_boot_override("Usb", persistent: persistent)
+    def boot_to_usb(persistence: nil, mode: nil)
+      set_boot_override("Usb", persistence: persistence, mode: mode)
     end
 
-    def boot_to_bios_setup(persistent: false)
-      set_boot_override("BiosSetup", persistent: persistent)
+    def boot_to_bios_setup(persistence: nil, mode: nil)
+      set_boot_override("BiosSetup", persistence: persistence, mode: mode)
     end
 
     # Jobs/Tasks
