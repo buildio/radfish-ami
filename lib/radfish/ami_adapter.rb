@@ -678,6 +678,10 @@ module Radfish
         }
       }
 
+      # Only send the mode when the caller asked for one; BMCs that do not
+      # support BootSourceOverrideMode reject the property outright.
+      payload["Boot"]["BootSourceOverrideMode"] = mode if mode
+
       response = authenticated_request(:patch, "/redfish/v1/Systems/#{SYSTEM_ID}", body: payload.to_json)
 
       if response.status.between?(200, 204)
